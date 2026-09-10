@@ -2,7 +2,7 @@
 // @name         哔哩哔哩 · 关注回顾 (Followings Review)
 // @name:zh-CN   哔哩哔哩 · 关注回顾
 // @namespace    bilibili-followings-review
-// @version      1.1.1
+// @version      1.2.0
 // @description  一键回顾你关注的全部 UP 主：概括内容类型、最后一条视频与最火视频、关注时间与年度关注史，支持图表统计与批量取关，帮你想起当初为什么关注。
 // @description:zh-CN  回顾关注的全部 UP 主：类型概括、最后更新/最火视频、饼图统计、年度关注史、批量取关。
 // @author       you
@@ -33,7 +33,7 @@
 
 /**
  * ============================================================================
- * 哔哩哔哩 · 关注回顾  v1.1.1
+ * 哔哩哔哩 · 关注回顾  v1.2.0
  * ----------------------------------------------------------------------------
  * 功能：
  *   1. 拉取【当前登录账号】关注的全部用户（关注时间 mtime / 是否互关 attribute）。
@@ -70,7 +70,7 @@
     document.documentElement.setAttribute('data-bfr-loaded', '1');
   } catch (e) { /* ignore */ }
 
-  const VERSION = '1.1.1';
+  const VERSION = '1.2.0';
   const STORE_KEY = 'bfr_store_v1';      // 关注数据缓存
   const SETTINGS_KEY = 'bfr_settings_v1';
   const WBICACHE_KEY = 'bfr_wbi_v1';
@@ -90,7 +90,8 @@
     ttlHours: 6,           // 缓存有效期（小时内自动跳过）
     notifyOnDone: true,
     fetchTop: true,        // 是否采集“最火视频”
-    unfollowGap: 900       // 批量取关的间隔(ms)
+    unfollowGap: 900,      // 批量取关的间隔(ms)
+    unfollowEnabled: false // 批量取关总开关：默认关闭；关闭时不显示管理/取关按钮，也绝不调用取关接口
   };
 
   /* ============================== 基础工具 ============================== */
@@ -823,6 +824,8 @@
   }
 
   async function runBatchUnfollow(mids) {
+    // 总开关：关闭状态下，任何方式触发的取关都直接拒绝
+    if (!SETTINGS.unfollowEnabled) { showToast('批量取关功能已关闭（可在 ⚙ 设置中开启）。'); return; }
     if (scanState && scanState.running) return;
     const csrf = getCsrf();
     if (!csrf) { showToast('未找到 csrf（bili_jct），请刷新页面并确认已登录。'); return; }
@@ -1565,7 +1568,9 @@
       '</select>' +
       '<button class="bfr-btn dark" data-view="1">' +
       (view.mode === 'list' ? '📊 图表' : '📋 列表') + '</button>' +
-      '<button class="bfr-btn ' + (view.manage ? 'primary' : 'dark') + '" data-manage="1">☑ 管理</button>';
+      (SETTINGS.unfollowEnabled
+        ? '<button class="bfr-btn ' + (view.manage ? 'primary' : 'dark') + '" data-manage="1">☑ 管理</button>'
+        : '<button class="bfr-btn dark" data-manage-off="1" title="批量取关已在设置中关闭">☑ 管理（已关闭）</button>');
 
     toolbar.querySelectorAll('.bfr-tab').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -1602,11 +1607,15 @@
       renderStats();
       renderList();
     });
+    const mOff = toolbar.querySelector('[data-manage-off]');
+    if (mOff) mOff.addEventListener('click', function () {
+      showToast('批量取关功能已在设置中关闭（如需使用请到 ⚙ 设置里开启）。');
+    });
   }
 
   function renderManageBar() {
     let bar = UI.root.querySelector('.bfr-managebar');
-    if (!view.manage) { if (bar) bar.remove(); return; }
+    if (!view.manage || !SETTINGS.unfollowEnabled) { if (bar) bar.remove(); return; }
     const count = Object.keys(view.selected).length;
     if (!bar) {
       bar = document.createElement('div');
@@ -1677,7 +1686,7 @@
   function renderFoot() {
     const el = UI.root.querySelector('.bfr-foot');
     el.innerHTML =
-      '本地归纳类型（不上传数据）｜AI 概括需在 ⚙ 填 API Key｜关注时间为 B 站 mtime（互关后会刷新，属近似值）｜最后扫描：' +
+      '本地归纳类型（不上传数据）｜AI 只生成文字，绝不修改关注关系｜取关功能默认关闭（⚙ 可开）｜关注时间为 B 站 mtime（互关后会刷新，属近似值）｜最后扫描：' +
       (STORE.savedAt ? new Date(STORE.savedAt).toLocaleString() : '尚未扫描') +
       '　<span class="bfr-link" data-export="md">导出 Markdown</span> · ' +
       '<span class="bfr-link" data-export="json">导出 JSON</span>';
@@ -2054,6 +2063,8 @@
       '<label>每批 AI 概括人数</label><input type="number" id="bfr-batch" min="1" max="50" value="' + s.llmBatch + '">' +
       '<label>采集并发数（1-6，越小越不容易被风控）</label><input type="number" id="bfr-conc" min="1" max="6" value="' + s.concurrency + '">' +
       '<label>缓存有效期（小时）</label><input type="number" id="bfr-ttl" min="1" max="168" value="' + s.ttlHours + '">' +
+      '<label class="small"><input type="checkbox" id="bfr-ufenable" ' + (s.unfollowEnabled ? 'checked' : '') + '> 启用「批量取关」功能（危险，默认关闭）</label>' +
+      '<p class="bfr-hint">关闭时面板不会出现「☑ 管理」与取关按钮，脚本也不会调用任何取关接口。<b>AI 概括只生成文字，与关注关系完全无关。</b></p>' +
       '<label>批量取关间隔（毫秒，建议 ≥600）</label><input type="number" id="bfr-ufgap" min="300" max="5000" step="100" value="' + s.unfollowGap + '">' +
       '<label class="small"><input type="checkbox" id="bfr-fetchtop" ' + (s.fetchTop ? 'checked' : '') + '> 采集「最火视频」（每个 UP 多一次请求）</label>' +
       '<label class="small"><input type="checkbox" id="bfr-notify" ' + (s.notifyOnDone ? 'checked' : '') + '> 完成后系统通知</label>' +
@@ -2074,6 +2085,8 @@
       SETTINGS.unfollowGap = Math.min(5000, Math.max(300, parseInt(UI.modal.querySelector('#bfr-ufgap').value, 10) || 900));
       SETTINGS.fetchTop = UI.modal.querySelector('#bfr-fetchtop').checked;
       SETTINGS.notifyOnDone = UI.modal.querySelector('#bfr-notify').checked;
+      SETTINGS.unfollowEnabled = UI.modal.querySelector('#bfr-ufenable').checked;
+      if (!SETTINGS.unfollowEnabled) { view.manage = false; view.selected = {}; }
       saveSettings(SETTINGS);
       UI.modal.className = 'bfr-modal';
       showToast('设置已保存。');
