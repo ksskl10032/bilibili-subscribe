@@ -2,7 +2,7 @@
 // @name         哔哩哔哩 · 关注回顾 (Followings Review)
 // @name:zh-CN   哔哩哔哩 · 关注回顾
 // @namespace    bilibili-followings-review
-// @version      1.2.2
+// @version      1.2.3
 // @description  一键回顾你关注的全部 UP 主：概括内容类型、最后一条视频与最火视频、关注时间与年度关注史，支持图表统计与批量取关，帮你想起当初为什么关注。
 // @description:zh-CN  回顾关注的全部 UP 主：类型概括、最后更新/最火视频、饼图统计、年度关注史、批量取关。
 // @author       you
@@ -33,7 +33,7 @@
 
 /**
  * ============================================================================
- * 哔哩哔哩 · 关注回顾  v1.2.2
+ * 哔哩哔哩 · 关注回顾  v1.2.3
  * ----------------------------------------------------------------------------
  * 功能：
  *   1. 拉取【当前登录账号】关注的全部用户（关注时间 mtime / 是否互关 attribute）。
@@ -70,7 +70,7 @@
     document.documentElement.setAttribute('data-bfr-loaded', '1');
   } catch (e) { /* ignore */ }
 
-  const VERSION = '1.2.2';
+  const VERSION = '1.2.3';
   const STORE_KEY = 'bfr_store_v1';      // 关注数据缓存
   const SETTINGS_KEY = 'bfr_settings_v1';
   const WBICACHE_KEY = 'bfr_wbi_v1';
@@ -997,6 +997,7 @@
       STORE.llmRanAt = 0;
       view.selected = {};
       view.manage = false;
+      resetViewFilters();
       try { GM_deleteValue(STORE_KEY); } catch (e) { /* ignore */ }
       if (!silent) {
         showToast('检测到已切换账号（' + cur.uname + '），已清空上一个账号的缓存。' + (hint || ''));
@@ -1038,7 +1039,12 @@
         setProgress(ratio * 0.06, '阶段 1/2 · 拉取关注列表 ' + done + (total ? ' / ' + total : '') + ' 人');
       });
       if (scanState.cancelled) return;
-      if (!follows.length) { showToast('关注列表为空。'); return; }
+      if (!follows.length) {
+        renderAll();
+        showToast('关注列表返回 0 人：账号 ' + STORE.account.uname + '（mid ' + STORE.account.mid +
+          '）。若你确信该账号有关注，请刷新页面后重试；若刚切换账号，请确认已在新账号下登录。');
+        return;
+      }
 
       const midSet = {};
       follows.forEach(function (f) {
@@ -1101,6 +1107,7 @@
 
       if (!mids.length) {
         hideProgress();
+        renderAll();
         showToast('无需更新（数据仍在缓存有效期内）。可再点「更新数据」选择全量重扫。');
         return;
       }
@@ -1630,6 +1637,9 @@
     listEl.addEventListener('click', function (ev) {
       const t = ev.target;
       if (!t || !t.getAttribute) return;
+      const actEmpty = t.getAttribute('data-act-empty');
+      if (actEmpty === 'clear') { resetViewFilters(); renderToolbar(); renderStats(); renderList(); return; }
+      if (actEmpty === 'scan') { askRefresh(); return; }
       if (t.getAttribute('data-clear-cat') !== null) { view.catFilter = null; renderStats(); renderList(); return; }
       if (t.getAttribute('data-clear-year') !== null) { view.yearFilter = null; renderStats(); renderList(); return; }
       const bucket = t.getAttribute('data-bucket');
@@ -1820,13 +1830,34 @@
   function renderFoot() {
     const el = UI.root.querySelector('.bfr-foot');
     el.innerHTML =
-      '本地归纳类型（不上传数据）｜AI 只生成文字，绝不修改关注关系｜取关功能默认关闭（⚙ 可开）｜关注时间为 B 站 mtime（互关后会刷新，属近似值）｜最后扫描：' +
+      '账号：' + (STORE.account ? esc(STORE.account.uname) + '（mid ' + STORE.account.mid + '）' : '未登录') +
+      '｜缓存 ' + STORE.order.length + ' 条' +
+      '｜本地归纳不上传数据｜AI 只生成文字，不修改关注关系｜取关默认关闭｜最后扫描：' +
       (STORE.savedAt ? new Date(STORE.savedAt).toLocaleString() : '尚未扫描') +
       '　<span class="bfr-link" data-export="md">导出 Markdown</span> · ' +
       '<span class="bfr-link" data-export="json">导出 JSON</span>';
     el.querySelectorAll('[data-export]').forEach(function (a) {
       a.addEventListener('click', function () { exportData(a.getAttribute('data-export')); });
     });
+  }
+
+  /** 重置全部筛选条件（换号后必须重置，否则旧账号的筛选会让列表看起来是空的） */
+  function resetViewFilters() {
+    view.tab = 'all';
+    view.search = '';
+    view.sort = 'recent';
+    view.catFilter = null;
+    view.yearFilter = null;
+  }
+
+  /** 当前是否有任何筛选条件在生效 */
+  function activeFilters() {
+    const arr = [];
+    if (view.tab !== 'all') arr.push('标签页：' + (BUCKET_LABEL[view.tab] || view.tab));
+    if (view.search) arr.push('搜索词：「' + view.search + '」');
+    if (view.catFilter) arr.push('类型筛选：' + view.catFilter);
+    if (view.yearFilter) arr.push('关注年份：' + view.yearFilter);
+    return arr;
   }
 
   function visibleItems() {
@@ -1874,12 +1905,19 @@
     if (view.mode === 'charts') { renderCharts(listEl); return; }
     const items = visibleItems();
     if (!items.length) {
-      listEl.innerHTML =
-        '<div class="bfr-empty"><div class="big">🗂️</div>' +
-        (STORE.order.length
-          ? '当前筛选下没有匹配的 UP 主。'
-          : '还没有数据。<br>点击右上角「🔄 更新数据」开始扫描你关注的全部 UP 主。') +
-        '</div>';
+      if (!STORE.order.length) {
+        listEl.innerHTML = '<div class="bfr-empty"><div class="big">🗂️</div>' +
+          '当前账号：' + (STORE.account ? esc(STORE.account.uname) + '（mid ' + STORE.account.mid + '）' : '未登录') +
+          '<br>还没有扫描数据。<br>点击「🔄 更新数据」开始扫描你关注的全部 UP 主。' +
+          '<div style="margin-top:12px"><button class="bfr-btn dark" data-act-empty="scan">🔄 立即扫描</button></div></div>';
+      } else {
+        const f = activeFilters();
+        listEl.innerHTML = '<div class="bfr-empty"><div class="big">🔍</div>' +
+          '已缓存 <b>' + STORE.order.length + '</b> 位 UP 主，但当前筛选条件没有匹配到任何一位：<br>' +
+          '<div style="margin-top:6px;color:#61666d">' + esc(f.join('　')) + '</div>' +
+          '<div style="margin-top:12px"><button class="bfr-btn dark" data-act-empty="clear">清除全部筛选</button></div>' +
+          '<div style="margin-top:8px;font-size:11.5px;color:#9499a0">数据本身没有问题，清除筛选即可看到全部 ' + STORE.order.length + ' 位。</div></div>';
+      }
       return;
     }
     const LIMIT = 500;
@@ -2093,11 +2131,20 @@
 
   function renderAll() {
     if (!UI) return;
-    renderHead();
-    renderToolbar();
-    renderStats();
-    renderList();
-    renderFoot();
+    try {
+      renderHead();
+      renderToolbar();
+      renderStats();
+      renderList();
+      renderFoot();
+    } catch (e) {
+      console.error('[关注回顾] 渲染失败', e);
+      const listEl = UI.root.querySelector('.bfr-list');
+      if (listEl) {
+        listEl.innerHTML = '<div class="bfr-empty"><div class="big">⚠️</div>渲染出错：' + esc(e.message) +
+          '<div style="margin-top:8px;font-size:11.5px;color:#9499a0">请把这条信息反馈给我，或在控制台查看 [关注回顾] 的报错详情。</div></div>';
+      }
+    }
   }
 
   /* ---------- 进度条（按真实数量推进） ---------- */
