@@ -2,7 +2,7 @@
 // @name         哔哩哔哩 · 关注回顾 (Followings Review)
 // @name:zh-CN   哔哩哔哩 · 关注回顾
 // @namespace    bilibili-followings-review
-// @version      1.2.1
+// @version      1.2.2
 // @description  一键回顾你关注的全部 UP 主：概括内容类型、最后一条视频与最火视频、关注时间与年度关注史，支持图表统计与批量取关，帮你想起当初为什么关注。
 // @description:zh-CN  回顾关注的全部 UP 主：类型概括、最后更新/最火视频、饼图统计、年度关注史、批量取关。
 // @author       you
@@ -33,7 +33,7 @@
 
 /**
  * ============================================================================
- * 哔哩哔哩 · 关注回顾  v1.2.1
+ * 哔哩哔哩 · 关注回顾  v1.2.2
  * ----------------------------------------------------------------------------
  * 功能：
  *   1. 拉取【当前登录账号】关注的全部用户（关注时间 mtime / 是否互关 attribute）。
@@ -70,7 +70,7 @@
     document.documentElement.setAttribute('data-bfr-loaded', '1');
   } catch (e) { /* ignore */ }
 
-  const VERSION = '1.2.1'
+  const VERSION = '1.2.2';
   const STORE_KEY = 'bfr_store_v1';      // 关注数据缓存
   const SETTINGS_KEY = 'bfr_settings_v1';
   const WBICACHE_KEY = 'bfr_wbi_v1';
@@ -706,10 +706,24 @@
     const ps = 50;
     let pn = 1;
     let total = -1;
+    let resynced = false;
     while (true) {
       const r = await biliGet('https://api.bilibili.com/x/relation/followings', {
         vmid: STORE.account.mid, pn: pn, ps: ps
       }, { cookie: true });
+      // 22115：该用户的关注列表不可见。最常见原因是缓存里还是上一个账号的 mid（同一浏览器换号）
+      if (r.code === 22115 && !resynced) {
+        resynced = true;
+        await syncAccount(true);
+        pn = 1; list.length = 0; total = -1;
+        continue;
+      }
+      if (r.code === 22115) {
+        const e = new Error('关注列表不可见（code=22115）。本次使用 mid=' + STORE.account.mid +
+          '（' + (STORE.account.uname || '未知') + '）请求被拒：请刷新页面后重试；若刚切换过账号，请确认已在新账号下登录。');
+        e.kind = 'privacy';
+        throw e;
+      }
       if (r.code === -101 || r.code === -400) {
         const e = new Error('关注列表请求失败(code=' + r.code + ')：' + r.message + '。请确认已登录 bilibili.com');
         e.kind = 'auth';
@@ -951,6 +965,58 @@
     }
   }
 
+  /* ---------- 账号同步：同一浏览器换号后必须改用新的 mid ---------- */
+
+  let lastAccountCheck = 0;
+
+  /**
+   * 校验当前登录账号，并与缓存中的账号比对。
+   * 换号时会清空上一个账号的关注缓存（vmid / 关注时间 / 互关状态都属于账号私有数据）。
+   * 这是 code=22115「用户已设置隐私」的根因：拿旧账号的 mid 去请求关注列表。
+   */
+  async function syncAccount(silent, hint) {
+    const nav = await biliGet('https://api.bilibili.com/x/web-interface/nav', null, { cookie: true });
+    if (!nav.ok || !nav.data) {
+      const e = new Error('无法获取登录信息（code=' + nav.code + ' ' + (nav.message || '接口异常') + '），请确认已登录 bilibili.com 并刷新页面');
+      e.kind = 'auth';
+      throw e;
+    }
+    if (!nav.data.isLogin) {
+      if (STORE.account) { STORE.account = null; saveStore(); }
+      const e = new Error('当前未登录（或登录状态已失效）。请先在 bilibili.com 登录再使用本脚本。');
+      e.kind = 'auth';
+      throw e;
+    }
+    const cur = { mid: nav.data.mid, uname: nav.data.uname || '', face: nav.data.face || '' };
+    const first = !STORE.account || !STORE.account.mid;
+    const changed = !first && String(STORE.account.mid) !== String(cur.mid);
+    if (changed) {
+      STORE.items = {};
+      STORE.order = [];
+      STORE.savedAt = 0;
+      STORE.llmRanAt = 0;
+      view.selected = {};
+      view.manage = false;
+      try { GM_deleteValue(STORE_KEY); } catch (e) { /* ignore */ }
+      if (!silent) {
+        showToast('检测到已切换账号（' + cur.uname + '），已清空上一个账号的缓存。' + (hint || ''));
+      }
+    }
+    STORE.account = cur;
+    saveStore();
+    return { changed: changed, first: first, account: cur };
+  }
+
+  /** 打开面板时的轻量校验：60 秒内最多请求一次 */
+  async function checkAccountSwitch() {
+    if (Date.now() - lastAccountCheck < 60000) return;
+    lastAccountCheck = Date.now();
+    try {
+      const acc = await syncAccount(false, '请点「🔄 更新数据」重新扫描。');
+      if (acc.changed) { view.tab = 'all'; view.catFilter = null; view.yearFilter = null; renderAll(); }
+    } catch (e) { /* 未登录等情况静默处理，等用户点更新时再提示 */ }
+  }
+
   /* ============================== 扫描流程 ============================== */
 
   async function runScan(mode) {
@@ -960,17 +1026,11 @@
     setProgress(0, '正在准备…');
     const cfg = SETTINGS;
 
-    if (!STORE.account || !STORE.account.mid) {
-      const nav = await biliGet('https://api.bilibili.com/x/web-interface/nav', null, { cookie: true });
-      if (!nav.ok || !nav.data || !nav.data.isLogin) {
-        showToast('未检测到登录。请先在 bilibili.com 登录后再使用本脚本。');
-        return;
-      }
-      STORE.account = { mid: nav.data.mid, uname: nav.data.uname || '', face: nav.data.face || '' };
-      saveStore();
-    }
-
     try {
+      // 0) 每次都校验当前登录账号：换号后必须用新的 mid，并丢弃旧账号缓存
+      const acc = await syncAccount(false, '正在用当前账号重新扫描…');
+      if (acc.changed || acc.first) mode = 'all';
+
       // ---------- 阶段 1/2：关注列表（按真实人数推进） ----------
       const follows = await fetchFollowingsAll(function (done, total) {
         if (scanState.cancelled) throw new Error('CANCELLED');
@@ -2062,7 +2122,7 @@
     ensureUI();
     const open = UI.root.classList.toggle('open');
     UI.mask.classList.toggle('open', open);
-    if (open) renderAll();
+    if (open) { renderAll(); checkAccountSwitch(); }
   }
   function closePanel() {
     ensureUI();
