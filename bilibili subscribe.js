@@ -2,7 +2,7 @@
 // @name         哔哩哔哩 · 关注回顾 (Followings Review)
 // @name:zh-CN   哔哩哔哩 · 关注回顾
 // @namespace    bilibili-followings-review
-// @version      1.1.0
+// @version      1.1.1
 // @description  一键回顾你关注的全部 UP 主：概括内容类型、最后一条视频与最火视频、关注时间与年度关注史，支持图表统计与批量取关，帮你想起当初为什么关注。
 // @description:zh-CN  回顾关注的全部 UP 主：类型概括、最后更新/最火视频、饼图统计、年度关注史、批量取关。
 // @author       you
@@ -33,7 +33,7 @@
 
 /**
  * ============================================================================
- * 哔哩哔哩 · 关注回顾  v1.1.0
+ * 哔哩哔哩 · 关注回顾  v1.1.1
  * ----------------------------------------------------------------------------
  * 功能：
  *   1. 拉取【当前登录账号】关注的全部用户（关注时间 mtime / 是否互关 attribute）。
@@ -64,7 +64,13 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.1.0';
+  // 同一页面只允许一份实例运行：防止重复安装脚本导致重复采集、重复按钮与重复通知
+  try {
+    if (document.documentElement.getAttribute('data-bfr-loaded') === '1') return;
+    document.documentElement.setAttribute('data-bfr-loaded', '1');
+  } catch (e) { /* ignore */ }
+
+  const VERSION = '1.1.1';
   const STORE_KEY = 'bfr_store_v1';      // 关注数据缓存
   const SETTINGS_KEY = 'bfr_settings_v1';
   const WBICACHE_KEY = 'bfr_wbi_v1';
@@ -893,6 +899,9 @@
 
   async function runScan(mode) {
     if (scanState && scanState.running) return;
+    // 先把状态置为运行中：下面的登录检查含 await，若此时再次触发会并发跑两次并各发一条通知
+    scanState = { running: true, cancelled: false, kind: 'scan', notified: false };
+    setProgress(0, '正在准备…');
     const cfg = SETTINGS;
 
     if (!STORE.account || !STORE.account.mid) {
@@ -905,8 +914,6 @@
       saveStore();
     }
 
-    scanState = { running: true, cancelled: false, kind: 'scan' };
-    setProgress(0, '正在准备…');
     try {
       // ---------- 阶段 1/2：关注列表（按真实人数推进） ----------
       const follows = await fetchFollowingsAll(function (done, total) {
@@ -1063,11 +1070,7 @@
       STORE.savedAt = nowTs();
       saveStore();
       renderAll();
-      if (cfg.notifyOnDone) {
-        try {
-          GM_notification({ title: '关注回顾 · 数据已更新', text: STORE.order.length + ' 位 UP 主已扫描完毕' });
-        } catch (e) { /* ignore */ }
-      }
+      notifyScanDone(STORE.order.length + ' 位 UP 主已扫描完毕');
       showToast('数据更新完成：共 ' + STORE.order.length + ' 位关注');
     } catch (e) {
       if (e.message !== 'CANCELLED') {
@@ -1982,6 +1985,24 @@
     ensureUI();
     UI.root.classList.remove('open');
     UI.mask.classList.remove('open');
+  }
+
+  /* ---------- 完成通知：每次扫描最多一条，且会自动消失 ---------- */
+  let lastNotifyAt = 0;
+  function notifyScanDone(text) {
+    if (!SETTINGS.notifyOnDone) return;
+    const now = Date.now();
+    // 去重窗口：10 秒内只允许一条，避免并发/重复触发把通知刷屏
+    if (now - lastNotifyAt < 10000) return;
+    lastNotifyAt = now;
+    try {
+      GM_notification({
+        title: '关注回顾 · 数据已更新',
+        text: text,
+        timeout: 6000,          // 6 秒后自动消失，不在通知中心里越堆越多
+        onclick: function () { if (typeof togglePanel === 'function') togglePanel(); }
+      });
+    } catch (e) { /* ignore */ }
   }
 
   /* ---------- toast ---------- */
