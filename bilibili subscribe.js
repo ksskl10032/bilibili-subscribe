@@ -2,7 +2,7 @@
 // @name         哔哩哔哩 · 关注回顾 (Followings Review)
 // @name:zh-CN   哔哩哔哩 · 关注回顾
 // @namespace    bilibili-followings-review
-// @version      1.2.0
+// @version      1.2.1
 // @description  一键回顾你关注的全部 UP 主：概括内容类型、最后一条视频与最火视频、关注时间与年度关注史，支持图表统计与批量取关，帮你想起当初为什么关注。
 // @description:zh-CN  回顾关注的全部 UP 主：类型概括、最后更新/最火视频、饼图统计、年度关注史、批量取关。
 // @author       you
@@ -33,7 +33,7 @@
 
 /**
  * ============================================================================
- * 哔哩哔哩 · 关注回顾  v1.2.0
+ * 哔哩哔哩 · 关注回顾  v1.2.1
  * ----------------------------------------------------------------------------
  * 功能：
  *   1. 拉取【当前登录账号】关注的全部用户（关注时间 mtime / 是否互关 attribute）。
@@ -70,7 +70,7 @@
     document.documentElement.setAttribute('data-bfr-loaded', '1');
   } catch (e) { /* ignore */ }
 
-  const VERSION = '1.2.0';
+  const VERSION = '1.2.1'
   const STORE_KEY = 'bfr_store_v1';      // 关注数据缓存
   const SETTINGS_KEY = 'bfr_settings_v1';
   const WBICACHE_KEY = 'bfr_wbi_v1';
@@ -147,6 +147,12 @@
   function trunc(s, n) {
     s = String(s == null ? '' : s);
     return s.length > n ? s.slice(0, n - 1) + '…' : s;
+  }
+
+  /** 昵称是否代表账号已注销/已封禁（B 站对这类账号使用的默认昵称） */
+  function isDeletedName(name) {
+    const n = String(name || '').trim();
+    return /注销/.test(n) || /^账号已封禁/.test(n) || /^用户已封禁/.test(n);
   }
 
   function median(arr) {
@@ -447,6 +453,7 @@
       if (it.attr == null) it.attr = 0;
       if (it.followTs == null) it.followTs = 0;
       if (it.top === undefined) it.top = null;
+      if (it.nameDeleted == null) it.nameDeleted = isDeletedName(it.uname);
     });
     return st;
   }
@@ -501,15 +508,18 @@
     if (!name) return null;
     const n = String(name);
     const has = function (s) { return n.indexOf(s) >= 0; };
-    if (has('游戏') || has('电竞')) return '游戏';
+    if (has('游戏') || has('电竞') || has('音游')) return '游戏';
     if (has('虚拟主播') || has('Vtuber') || has('vUP')) return '虚拟主播';
-    if (has('音乐') || has('VOCALOID') || has('翻唱') || has('演奏') || has('乐评') || has('电音')) return '音乐';
-    if (has('舞蹈')) return '舞蹈';
+    if (has('直播') || has('录播')) return '直播';
+    if (has('音乐') || has('VOCALOID') || has('翻唱') || has('演奏') || has('乐评') || has('电音')
+      || has('MV') || has('演唱会')) return '音乐';
+    if (has('舞蹈') || has('舞')) return '舞蹈';
     if (has('鬼畜') || has('音MAD') || has('人力VOCAL')) return '鬼畜';
     if (has('动画') || has('MAD') || has('MMD') || has('手书') || has('配音') || has('特摄')) return '动画·番剧';
     if (has('番剧') || has('国创') || has('布袋戏') || has('动态漫')) return '动画·番剧';
     if (has('知识') || has('科普') || has('财经') || has('校园') || has('职场') || has('社科')
-      || has('人文') || has('历史') || has('法律') || has('心理') || has('设计') || has('职业')) return '知识';
+      || has('人文') || has('历史') || has('法律') || has('心理') || has('设计') || has('职业')
+      || has('科学') || has('技能') || has('课堂') || has('教育') || has('学习')) return '知识';
     if (has('科技') || has('数码') || has('软件') || has('计算机') || has('极客') || has('装机')
       || has('科工') || has('手机') || has('电脑') || has('平板') || has('DIY')) return '科技数码';
     if (has('汽车') || has('摩托') || has('赛车') || has('改装') || has('新能源车') || has('房车')
@@ -523,13 +533,14 @@
     if (has('时尚') || has('美妆') || has('护肤') || has('穿搭') || has('汉服') || has('仿妆')
       || has('彩妆') || has('发型') || has('服饰')) return '时尚';
     if (has('影视') || has('电影') || has('电视剧') || has('剪辑') || has('解说') || has('影评')
-      || has('预告')) return '影视';
+      || has('预告') || has('短片')) return '影视';
     if (has('娱乐') || has('综艺') || has('明星') || has('娱乐圈')) return '娱乐';
     if (has('纪录片')) return '纪录片';
     if (has('资讯') || has('热点') || has('新闻') || has('环球') || has('社会')) return '资讯';
     if (has('搞笑')) return '搞笑';
     if (has('生活') || has('日常') || has('vlog') || has('Vlog') || has('亲子') || has('出行')
-      || has('三农') || has('家居') || has('手工') || has('绘画') || has('户外')) return '生活';
+      || has('三农') || has('家居') || has('手工') || has('绘画') || has('户外')
+      || has('ASMR') || has('助眠')) return '生活';
     return null;
   }
 
@@ -551,81 +562,123 @@
     ['搞笑', '搞笑'], ['沙雕', '搞笑'], ['整活', '搞笑']
   ];
 
-  /** 本地规则概括 */
+  /**
+   * 本地规则概括：多信号加权
+   *   近期投稿分区（越新权重越高） > 历史全站分区统计（对数封顶）
+   *   官方认证 +10（强信号）、主页签名 +2（弱信号）；机构/官方号直接定性
+   * 这样可避免“早年分区视频多、现在已转型”的 UP 被历史统计带偏。
+   */
   function categorizeLocal(up) {
     const officialDesc = (up.official && up.official.desc) || '';
     const officialType = (up.official && up.official.type) || -1;
     const sign = (up.sign || '').trim();
     const zones = up.zones || [];
+    const recent = up.recent || [];
     const tags = [];
-
-    let major = null;
-    let zoneName = '';
-    let source = '';
 
     if (up.status === 'deleted') {
       return {
-        major: '已注销', label: '账号已注销/不可访问',
-        detail: '该账号在 B 站已不存在（接口返回 -404），大概率是注销或被永久封禁。',
+        major: '已注销',
+        label: '账号已注销/不可访问',
+        detail: up.nameDeleted
+          ? '昵称为「' + (up.uname || '账号已注销') + '」，这是 B 站对已注销账号的默认昵称，账号已不可访问。'
+          : '该账号在 B 站已不存在（接口返回 -404），大概率是注销或被永久封禁。',
         tags: [], source: 'probe'
       };
     }
 
-    if (officialDesc) {
-      const isOrg = officialType === 1 || /官方/.test(officialDesc);
-      if (isOrg) {
-        major = '官方/机构';
-        source = 'official';
-      } else {
-        const m = officialDesc.match(/(?:知名|认证)?([\u4e00-\u9fa5A-Za-z·]{1,8})(?:UP主|创作者)/);
-        const hint = m ? m[1] : '';
-        const byName = hint ? majorOfName(hint) : null;
-        if (byName) {
-          major = byName;
-          source = 'official';
-        } else {
-          major = 'UP主认证';
-          source = 'official';
-        }
-      }
+    // 机构 / 官方号：直接定性
+    if (officialDesc && (officialType === 1 || /官方/.test(officialDesc))) {
+      zones.slice(0, 2).forEach(function (z) {
+        const nm = z.name || TID_NAME[z.tid] || '';
+        if (nm && tags.indexOf(nm) < 0) tags.push(nm);
+      });
+      return {
+        major: '官方/机构',
+        label: '官方/机构',
+        detail: '认证：' + officialDesc,
+        tags: tags.slice(0, 4),
+        source: 'official'
+      };
     }
 
-    if (!major && zones.length) {
-      const top = zones[0];
-      if (top && top.count > 0) {
-        zoneName = top.name || (TID_NAME[top.tid] || '');
-        const m = majorOfName(zoneName) || (TID_NAME[top.tid] ? majorOfName(TID_NAME[top.tid]) : null);
-        if (m) { major = m; source = 'zone'; }
-      }
-    }
+    // ---------- 多信号加权打分 ----------
+    const score = {};
+    const add = function (m, w) { if (m) score[m] = (score[m] || 0) + w; };
 
-    if (!major && sign) {
-      for (let i = 0; i < SIGN_RULES.length; i++) {
-        if (sign.indexOf(SIGN_RULES[i][0]) >= 0) {
-          major = SIGN_RULES[i][1];
-          source = 'sign';
-          break;
-        }
-      }
-    }
-
-    zones.slice(0, 2).forEach(function (z) {
-      const nm = z.name || TID_NAME[z.tid] || '';
-      if (nm && tags.indexOf(nm) < 0) tags.push(nm);
+    // 1) 近期投稿分区：越新权重越高（前 5 条 ×3，其余 ×2）
+    const recentZoneCount = {};
+    let recentCounted = 0;
+    recent.slice(0, 15).forEach(function (v, i) {
+      const nm = v.zone || TID_NAME[v.tid] || '';
+      const m = majorOfName(nm);
+      if (!m) return;
+      recentCounted++;
+      recentZoneCount[nm] = (recentZoneCount[nm] || 0) + 1;
+      add(m, i < 5 ? 3 : 2);
+    });
+    let recentTopZone = '', recentTopZoneCount = 0;
+    Object.keys(recentZoneCount).forEach(function (nm) {
+      if (recentZoneCount[nm] > recentTopZoneCount) { recentTopZone = nm; recentTopZoneCount = recentZoneCount[nm]; }
     });
 
-    const detail = [];
-    if (source === 'official') detail.push('认证：' + officialDesc);
-    if (zoneName) detail.push('投稿以「' + zoneName + '」为主');
-    if (zones.length >= 2 && zones[1] && zones[1].count > 0) {
-      const nm2 = zones[1].name || TID_NAME[zones[1].tid] || '';
-      if (nm2 && nm2 !== zoneName && zones[1].count / (zones[0].count || 1) >= 0.25) {
-        detail.push('兼有「' + nm2 + '」');
-      }
+    // 2) 历史全站分区统计（tlist）：对数权重并封顶，避免老视频碾压
+    zones.slice(0, 8).forEach(function (z) {
+      const nm = z.name || TID_NAME[z.tid] || '';
+      const m = majorOfName(nm);
+      if (!m) return;
+      add(m, Math.min(4, Math.log(1 + (z.count || 0)) / Math.LN2));
+      if (nm && tags.indexOf(nm) < 0 && tags.length < 2) tags.push(nm);
+    });
+    const historyTop = zones[0] ? (zones[0].name || TID_NAME[zones[0].tid] || '') : '';
+    const historyTopMajor = historyTop ? majorOfName(historyTop) : null;
+
+    // 3) 官方认证（个人认证）：强信号
+    let officialMajor = null;
+    if (officialDesc) {
+      const m = officialDesc.match(/(?:知名|认证)?([\u4e00-\u9fa5A-Za-z·]{1,8})(?:UP主|创作者)/);
+      officialMajor = m ? majorOfName(m[1]) : null;
+      if (officialMajor) add(officialMajor, 10);
     }
-    if (!officialDesc && sign) detail.push('签名：' + trunc(sign, 60));
-    if (!officialDesc && !zones.length && !sign) {
-      detail.push(up.status === 'novideo' ? '该账号暂无公开投稿（可能只在直播/专栏活动，也可能是你的好友）'
+
+    // 4) 主页签名关键词：弱信号
+    let signMajor = null;
+    if (sign) {
+      for (let i = 0; i < SIGN_RULES.length; i++) {
+        if (sign.indexOf(SIGN_RULES[i][0]) >= 0) { signMajor = SIGN_RULES[i][1]; break; }
+      }
+      if (signMajor) add(signMajor, 2);
+    }
+
+    // ---------- 选取得分最高者 ----------
+    let major = null, best = 0;
+    Object.keys(score).forEach(function (k) {
+      if (score[k] > best) { best = score[k]; major = k; }
+    });
+
+    // ---------- 说明文案：把判断依据摊开，便于人工核对 ----------
+    const detail = [];
+    const srcs = [];
+    if (officialDesc) { detail.push('认证：' + officialDesc); if (officialMajor) srcs.push('认证'); }
+    if (recentCounted > 0) {
+      detail.push('近期 ' + recentCounted + ' 条投稿以「' + (recentTopZone || major || '未知') + '」为主' +
+        (recentTopZoneCount > 1 ? '（' + recentTopZoneCount + ' 条）' : ''));
+      srcs.push('近期分区');
+    }
+    if (historyTop && historyTopMajor && historyTopMajor !== major) {
+      detail.push('历史投稿中「' + historyTop + '」较多');
+      srcs.push('历史分区');
+    } else if (historyTop && recentCounted === 0) {
+      detail.push('历史投稿以「' + historyTop + '」为主');
+      srcs.push('历史分区');
+    }
+    if (recentCounted > 0 && recentCounted < 3 && historyTop) {
+      detail.push('近期投稿较少，主要参考历史投稿');
+    }
+    if (!officialDesc && sign) { detail.push('签名：' + trunc(sign, 60)); if (signMajor) srcs.push('签名'); }
+    if (!detail.length) {
+      detail.push(up.status === 'novideo'
+        ? '该账号暂无公开投稿（可能只在直播/专栏活动，也可能是你的好友）'
         : '暂无可判断依据');
     }
 
@@ -634,7 +687,7 @@
       label: major || '未知',
       detail: detail.join('；'),
       tags: tags.slice(0, 4),
-      source: source || 'none'
+      source: srcs.join('+') || 'none'
     };
   }
 
@@ -932,6 +985,7 @@
         midSet[f.mid] = true;
         const followTs = (f.mtime && f.mtime > 0) ? f.mtime : 0;
         const attr = f.attribute != null ? f.attribute : 0;
+        const nameDeleted = isDeletedName(f.uname);
         if (!STORE.items[f.mid]) {
           STORE.items[f.mid] = {
             mid: f.mid, uname: f.uname || '', face: f.face || '',
@@ -940,7 +994,7 @@
               type: (f.official_verify && f.official_verify.type) || -1,
               desc: (f.official_verify && f.official_verify.desc) || ''
             },
-            attr: attr, followTs: followTs,
+            attr: attr, followTs: followTs, nameDeleted: nameDeleted,
             status: 'pending', fetchedAt: 0, err: '',
             total: 0, zones: [], last: null, recent: [], top: null,
             cat: null, llm: null, mediaGapDays: null
@@ -952,6 +1006,16 @@
           if (f.sign != null) it.sign = f.sign;
           if (f.official_verify) it.official = { type: f.official_verify.type, desc: f.official_verify.desc };
           it.attr = attr;
+          it.nameDeleted = nameDeleted;
+          // 昵称就是「账号已注销」：直接纠正为已注销，不再浪费一次接口请求
+          if (nameDeleted && it.status !== 'deleted') {
+            it.status = 'deleted';
+            it.err = '昵称显示为「' + (it.uname || '') + '」（B 站对已注销账号的默认昵称）';
+            it.total = 0; it.last = null; it.recent = []; it.top = null; it.zones = [];
+            it.cat = categorizeLocal(it);
+            it.mediaGapDays = null;
+            it.fetchedAt = nowTs();
+          }
           if (followTs) it.followTs = followTs;
         }
       });
@@ -991,14 +1055,24 @@
           await sleep(Math.floor(Math.random() * (cfg.pageGap || 300)));
           const it = STORE.items[mid];
           let res;
-          try {
-            res = await fetchArchive(mid, 'pubdate', ps, cfg);
-          } catch (e) {
-            res = { status: 'error', mid: mid, err: String(e.message) };
+          if (it.nameDeleted) {
+            res = { status: 'deletedByName', mid: mid };
+          } else {
+            try {
+              res = await fetchArchive(mid, 'pubdate', ps, cfg);
+            } catch (e) {
+              res = { status: 'error', mid: mid, err: String(e.message) };
+            }
           }
           if (scanState && scanState.cancelled) return;
 
-          if (res.status === 'ok') {
+          if (res.status === 'deletedByName') {
+            it.status = 'deleted';
+            it.err = '昵称显示为「' + it.uname + '」（B 站对已注销账号的默认昵称）';
+            it.total = 0; it.last = null; it.recent = []; it.top = null; it.zones = [];
+            it.cat = categorizeLocal(it);
+            it.mediaGapDays = null;
+          } else if (res.status === 'ok') {
             const recent = (res.list || []).slice(0, cfg.recentN || 12);
             it.last = recent.length ? {
               bvid: recent[0].bvid, title: trunc(recent[0].title, 120),
@@ -1829,7 +1903,7 @@
       '</div>' +
       lastTxt +
       '<div class="bfr-time">' + timeTxt + '</div>' +
-      '<div><span class="bfr-badge ' + badge[0] + '">' + badge[1] + '</span></div>' +
+      '<div><span class="bfr-badge ' + badge[0] + '" title="' + esc(it.err || badge[1]) + '">' + badge[1] + '</span></div>' +
       followTxt +
       '</div>';
   }
