@@ -2,7 +2,7 @@
 // @name         哔哩哔哩 · 关注回顾 (Followings Review)
 // @name:zh-CN   哔哩哔哩 · 关注回顾
 // @namespace    bilibili-followings-review
-// @version      1.2.3
+// @version      1.2.4
 // @description  一键回顾你关注的全部 UP 主：概括内容类型、最后一条视频与最火视频、关注时间与年度关注史，支持图表统计与批量取关，帮你想起当初为什么关注。
 // @description:zh-CN  回顾关注的全部 UP 主：类型概括、最后更新/最火视频、饼图统计、年度关注史、批量取关。
 // @author       you
@@ -33,7 +33,7 @@
 
 /**
  * ============================================================================
- * 哔哩哔哩 · 关注回顾  v1.2.3
+ * 哔哩哔哩 · 关注回顾  v1.2.4
  * ----------------------------------------------------------------------------
  * 功能：
  *   1. 拉取【当前登录账号】关注的全部用户（关注时间 mtime / 是否互关 attribute）。
@@ -70,7 +70,7 @@
     document.documentElement.setAttribute('data-bfr-loaded', '1');
   } catch (e) { /* ignore */ }
 
-  const VERSION = '1.2.3';
+  const VERSION = '1.2.4';
   const STORE_KEY = 'bfr_store_v1';      // 关注数据缓存
   const SETTINGS_KEY = 'bfr_settings_v1';
   const WBICACHE_KEY = 'bfr_wbi_v1';
@@ -1727,32 +1727,37 @@
         renderList();
       });
     });
-    toolbar.querySelector('.bfr-search').addEventListener('input', debounce(function (ev) {
+    // 统一安全绑定：工具栏里有条件渲染的按钮（如取关功能关闭时的 data-manage-off），
+    // 一旦 querySelector 返回 null 就会抛异常，导致后面的 renderStats/renderList 都不执行（表现为列表空白）
+    const bind = function (sel, evt, fn) {
+      const el = toolbar.querySelector(sel);
+      if (el) el.addEventListener(evt, fn);
+    };
+    bind('.bfr-search', 'input', debounce(function (ev) {
       view.search = ev.target.value;
       renderList();
     }, 200));
-    toolbar.querySelector('[data-sort]').addEventListener('change', function (ev) {
+    bind('[data-sort]', 'change', function (ev) {
       view.sort = ev.target.value;
       renderList();
     });
-    toolbar.querySelector('[data-minplay]').addEventListener('change', function (ev) {
+    bind('[data-minplay]', 'change', function (ev) {
       view.minPlay = parseInt(ev.target.value, 10) || 0;
       renderList();
     });
-    toolbar.querySelector('[data-view]').addEventListener('click', function () {
+    bind('[data-view]', 'click', function () {
       view.mode = view.mode === 'list' ? 'charts' : 'list';
       renderToolbar();
       renderList();
     });
-    toolbar.querySelector('[data-manage]').addEventListener('click', function () {
+    bind('[data-manage]', 'click', function () {
       view.manage = !view.manage;
       if (!view.manage) view.selected = {};
       renderToolbar();
       renderStats();
       renderList();
     });
-    const mOff = toolbar.querySelector('[data-manage-off]');
-    if (mOff) mOff.addEventListener('click', function () {
+    bind('[data-manage-off]', 'click', function () {
       showToast('批量取关功能已在设置中关闭（如需使用请到 ⚙ 设置里开启）。');
     });
   }
