@@ -1,0 +1,116 @@
+# 哔哩哔哩 · 关注回顾（Tampermonkey 油猴脚本）v1.1.0
+
+一个运行在浏览器里的 JavaScript 插件（油猴用户脚本）。点击页面右下角悬浮按钮，即可回顾**当前登录账号关注的全部 UP 主**：类型概括、最后更新与最火视频、关注时间与年度关注史、饼图统计，并支持批量取关。
+
+| 文件 | 说明 |
+| --- | --- |
+| `bilibili subscribe.js` | 插件本体（带 `// ==UserScript==` 元数据，直接给油猴安装/覆盖更新） |
+
+---
+
+## 一、功能一览
+
+### 1. UP 主档案
+- **类型概括**：本地规则（官方认证 → 全站投稿分区统计 → 主页签名 → 视频标题）给出「游戏 / 知识 / 科技数码 / 美食…」等大类；
+- **最后一条视频**：标题（可点击）、分区、发布日期、距今多久、更新间隔中位数；
+- **最火视频**：该 UP 播放量最高的视频（`order=click`），带播放量与日期，千万播放会红色加粗高亮；
+- **关注时间**：来自关注列表接口 `mtime`（显示到月份），并可标出**互关（互粉）**的好友；
+- **状态区分**：近30天 / 1~6月 / 6~12月 / 停更超1年 / **无投稿** / **账号已注销** 六种徽章。无投稿与注销是分开判定的：无投稿的账号会进一步探测空间信息，返回 `-404` 才判定为「已注销」，避免把只是不发视频的好友误标成注销。
+
+### 2. 报告面板
+- 搜索（昵称 / 类型 / 视频标题）、排序（最近更新 / 停更最久 / 关注时间 / **最火播放** / 昵称）、标签页筛选；
+- **播放量阈值筛选**：最火不限 / ≥10万 / ≥100万 / **≥1000万**；
+- 顶部统计条：近 30 天更新、半年内、停更超 1 年、无投稿、已注销、互关人数。
+
+### 3. 图表统计（📊 图表 按钮）
+- **① 最后发视频时间占比**：环形饼图 + 图例，点击图例即可筛选列表；
+- **② 关注类型占比**：环形饼图（前 8 类 + 其他），点击可按类型筛选；
+- **③ 按关注年份的类型分布**：每一年的关注人数、类型百分比堆叠条与 Top3 类型，并给出一句话总结，例如「你在 **2025** 年关注了 **123** 位 UP 主，其中最多的是「游戏」（45%）」，可一键查看该年关注的完整列表 —— 直接回答“我 2025 年主要在关注什么类型的 UP 主”。
+
+### 4. 批量取关（☑ 管理）
+1. 点工具栏 **☑ 管理** → 列表出现勾选框；
+2. 勾选若干 UP 主（或「全选当前列表」）；
+3. 点 **🗑 取关选中（N）** → 二次确认后逐条取关，显示「取关 3/37：某某」进度，结束后给出成功/失败汇总与失败原因。
+
+> ⚠️ 取关会真实取消你在 B 站的关注，且无法一键恢复。默认每条间隔 900ms（设置里可调），并会在 csrf 失效时自动中止。
+
+### 5. 导出
+- **JSON**：结构化（含 `mutual` / `followTime` / `lastVideo` / `topVideo` / `yearStats` 等字段），便于二次分析；
+- **Markdown**：含「按关注年份」汇总表 + UP 主明细表（类型、最新视频、最火视频、最后更新、关注时间、状态）。
+
+---
+
+## 二、安装与使用
+
+1. 浏览器安装 **Tampermonkey**（Chrome / Edge / Firefox 均可）；
+2. 油猴面板 →「添加新脚本」→ 粘贴 `bilibili subscribe.js` 全文 → `Ctrl+S` 保存；
+   - 已经装过 1.0.0 的话：打开旧脚本全选替换成新内容保存即可，本地缓存会自动兼容升级；
+3. 在**已登录**状态下打开任意 `*.bilibili.com` 页面；
+4. 点右下角 **「📋 关注回顾」** → 右上角 **「🔄 更新数据」**。
+
+油猴菜单命令：📋 打开面板 / 🔄 全量重扫 / 📊 打开图表 / ⚙ 设置。
+
+---
+
+## 三、工作原理（接口）
+
+| 用途 | 接口 |
+| --- | --- |
+| 登录账号、wbi 实时密钥 | `GET api.bilibili.com/x/web-interface/nav` |
+| 关注列表（含关注时间 mtime、互关 attribute），分页全量 | `GET api.bilibili.com/x/relation/followings?vmid=&pn=&ps=50` |
+| 最近投稿 / 最火投稿（分区统计 + 视频列表） | `GET api.bilibili.com/x/space/wbi/arc/search`（**WBI 签名**，`order=pubdate` / `order=click`） |
+| 判定账号是否存在（区分无投稿 / 已注销） | `GET api.bilibili.com/x/space/wbi/acc/info`（WBI 签名），兜底 `x/web-interface/card` |
+| 投稿列表兜底（无需签名） | `GET app.biliapi.com/x/v2/space/archive/cursor` |
+| 取关（批量按钮逐条调用） | `POST api.bilibili.com/x/relation/modify`（`act=2`，携带 `csrf`=`bili_jct`） |
+| 批量取关接口说明 | `x/relation/batch/modify` **只支持关注/拉黑**，不支持取关，因此本脚本逐条调用单条接口并加间隔 |
+
+- WBI 签名实现参照 [bilibili-API-collect「WBI 签名」](https://gitea.s1f.ren/shiran/bilibili-API-collect/raw/branch/master/docs/misc/sign/wbi.md)，已用官方示例向量本地回归验证（`md5 / getMixinKey / encWbi`）。
+- 字段资料：[用户关系](https://gitea.s1f.ren/shiran/bilibili-API-collect/raw/branch/master/docs/user/relation.md)、[用户空间](https://gitea.s1f.ren/shiran/bilibili-API-collect/raw/branch/master/docs/user/space.md)。
+- 所有请求通过油猴 `GM_xmlhttpRequest` 携带当前页面登录态（Cookie + Referer），**除取关外全部为只读**。
+
+### 进度条说明
+进度条按**真实数量**推进，分两个阶段：
+- 阶段 1/2：拉取关注列表（`已拉取人数 / 关注总数`，占前 6%）；
+- 阶段 2/2：逐个 UP 主采集（`已完成 / 待采集`，占 6%→100%）。
+
+所以 1000/4000 时进度条只到约 30%，不会出现“刚到一半就快到头”的误导。AI 概括与批量取关同样使用真实进度。
+
+---
+
+## 四、可选：AI 概括（自带 Key）
+
+1. **⚙ 设置** → 勾选「启用大模型概括」；
+2. 填 **API 地址**（默认 `https://api.deepseek.com`）、**API Key**、**模型**（默认 `deepseek-chat`）；
+3. 回到面板点 **✨ AI 概括**。
+
+- Key 只存在本机油猴存储，不会出现在导出文件里；
+- 启用后会把每个 UP 的**昵称 / 认证 / 签名 / 最火视频 / 最近视频标题**发给所填服务商；不启用则完全本地分析、零上传；
+- 其它厂商（OpenAI、Moonshot、智谱、SiliconFlow 等）域名已预置在脚本头部 `@connect`；**其它域名请自行追加一行 `// @connect 你的域名`**，否则会被油猴拦截。
+
+---
+
+## 五、常见问题
+
+- **提示未登录 / 列表为空**：确认浏览器已登录 B 站（接口要求 Cookie + bilibili.com 子域 Referer）。
+- **采集慢或提示风控**：把「采集并发数」调到 1~2；脚本自带重试、换 key、退避与 APP 接口兜底。
+- **取关失败**：
+  - `22013 账号已注销，无法完成操作`：这种号已注销，本身无法取关，会被自动标注为「账号已注销」；
+  - `-111 csrf 校验失败`：刷新页面重试（脚本会立即中止后续操作）。
+- **最火视频缺失**：小账号直接从已取回的投稿里算最火，不需要额外请求；大账号会多发一次 `order=click` 请求，可在设置里关掉「采集最火视频」。
+- **关注时间是近似值**：`mtime` 在互关（互粉）后会被 B 站刷新，因此年份统计可能略有偏移，界面与导出均已注明。
+- **缓存**：默认 6 小时内不重复抓取；「更新数据」确认框选「确定」可全量重扫；⚙ → 清空缓存可删除本地数据（不影响账号）。
+
+---
+
+## 六、已知限制
+
+- 仅统计「投稿视频」，不含动态、专栏、直播（直播回放若属于投稿则会体现）；
+- 关注人数很多（数千）时请调低并发，首次全量采集需要几分钟；
+- B 站接口可能随时调整（尤其 wbi 签名与风控参数），如遇失效请更新脚本。
+
+## 七、参考
+
+- [bilibili-API-collect（Gitea 镜像，持续更新）](https://gitea.s1f.ren/shiran/bilibili-API-collect)
+- [WBI 签名文档](https://gitea.s1f.ren/shiran/bilibili-API-collect/raw/branch/master/docs/misc/sign/wbi.md)
+- [用户关系接口文档](https://gitea.s1f.ren/shiran/bilibili-API-collect/raw/branch/master/docs/user/relation.md)
+- [用户空间接口文档](https://gitea.s1f.ren/shiran/bilibili-API-collect/raw/branch/master/docs/user/space.md)
