@@ -2,7 +2,7 @@
 // @name         哔哩哔哩 · 关注回顾 (Followings Review)
 // @name:zh-CN   哔哩哔哩 · 关注回顾
 // @namespace    bilibili-followings-review
-// @version      1.2.5
+// @version      1.2.6
 // @description  一键回顾你关注的全部 UP 主：概括内容类型、最后一条视频与最火视频、关注时间与年度关注史，支持图表统计与批量取关，帮你想起当初为什么关注。
 // @description:zh-CN  回顾关注的全部 UP 主：类型概括、最后更新/最火视频、饼图统计、年度关注史、批量取关。
 // @author       you
@@ -33,7 +33,7 @@
 
 /**
  * ============================================================================
- * 哔哩哔哩 · 关注回顾  v1.2.5
+ * 哔哩哔哩 · 关注回顾  v1.2.6
  * ----------------------------------------------------------------------------
  * 功能：
  *   1. 拉取【当前登录账号】关注的全部用户（关注时间 mtime / 是否互关 attribute）。
@@ -70,7 +70,7 @@
     document.documentElement.setAttribute('data-bfr-loaded', '1');
   } catch (e) { /* ignore */ }
 
-  const VERSION = '1.2.5';
+  const VERSION = '1.2.6';
   const STORE_KEY = 'bfr_store_v1';      // 关注数据缓存
   const SETTINGS_KEY = 'bfr_settings_v1';
   const WBICACHE_KEY = 'bfr_wbi_v1';
@@ -455,6 +455,14 @@
       if (it.top === undefined) it.top = null;
       if (it.nameDeleted == null) it.nameDeleted = isDeletedName(it.uname);
     });
+    // v1.2.6：已注销账号也要尝试读取历史投稿（能借此看到 TA 最后一条视频），
+    // 所以把旧版本里“已注销已采集”的条目一次性标记为待更新
+    if (st.deletedScanV !== 2) {
+      Object.keys(st.items).forEach(function (mid) {
+        if (st.items[mid].status === 'deleted') st.items[mid].fetchedAt = 0;
+      });
+      st.deletedScanV = 2;
+    }
     return st;
   }
   function saveStore() {
@@ -577,13 +585,28 @@
     const tags = [];
 
     if (up.status === 'deleted') {
+      const zTop = (up.zones && up.zones[0]) ? (up.zones[0].name || TID_NAME[up.zones[0].tid] || '') : '';
+      const zMajor = zTop ? majorOfName(zTop) : null;
+      const parts = [];
+      parts.push(up.nameDeleted
+        ? '昵称为「' + (up.uname || '账号已注销') + '」（B 站对已注销账号的默认昵称）'
+        : '该账号在 B 站已不存在（接口返回 -404），大概率是注销或被永久封禁');
+      if (up.last && up.last.created) {
+        parts.push('仍可查到历史投稿，最后一条更新于 ' + fmtDate(up.last.created) +
+          '（' + fmtSpan(daysAgo(up.last.created)) + '）');
+      }
+      if (zMajor) parts.push('历史投稿主要在「' + zTop + '」（' + zMajor + '类）');
+      const delTags = [];
+      (up.zones || []).slice(0, 2).forEach(function (z) {
+        const nm = z.name || TID_NAME[z.tid] || '';
+        if (nm && delTags.indexOf(nm) < 0) delTags.push(nm);
+      });
       return {
         major: '已注销',
-        label: '账号已注销/不可访问',
-        detail: up.nameDeleted
-          ? '昵称为「' + (up.uname || '账号已注销') + '」，这是 B 站对已注销账号的默认昵称，账号已不可访问。'
-          : '该账号在 B 站已不存在（接口返回 -404），大概率是注销或被永久封禁。',
-        tags: [], source: 'probe'
+        label: '已注销' + (zMajor ? '（曾' + zMajor + '区）' : ''),
+        detail: parts.join('；') + '。',
+        tags: delTags,
+        source: 'probe'
       };
     }
 
@@ -1073,14 +1096,13 @@
           if (f.official_verify) it.official = { type: f.official_verify.type, desc: f.official_verify.desc };
           it.attr = attr;
           it.nameDeleted = nameDeleted;
-          // 昵称就是「账号已注销」：直接纠正为已注销，不再浪费一次接口请求
+          // 昵称就是「账号已注销」：徽章立刻纠正为已注销，但不再清空数据，
+          // 并让本轮重新查询一次投稿（B 站常保留已注销账号的稿件，能看到最后一条视频）
           if (nameDeleted && it.status !== 'deleted') {
             it.status = 'deleted';
             it.err = '昵称显示为「' + (it.uname || '') + '」（B 站对已注销账号的默认昵称）';
-            it.total = 0; it.last = null; it.recent = []; it.top = null; it.zones = [];
             it.cat = categorizeLocal(it);
-            it.mediaGapDays = null;
-            it.fetchedAt = nowTs();
+            it.fetchedAt = 0;
           }
           if (followTs) it.followTs = followTs;
         }
@@ -1122,14 +1144,15 @@
           await sleep(Math.floor(Math.random() * (cfg.pageGap || 300)));
           const it = STORE.items[mid];
           let res;
-          if (it.nameDeleted) {
+          try {
+            res = await fetchArchive(mid, 'pubdate', ps, cfg);
+          } catch (e) {
+            res = { status: 'error', mid: mid, err: String(e.message) };
+          }
+          // 昵称即「账号已注销」的账号：不再探测账号资料（省一次请求），
+          // 但仍尝试读取历史投稿；只有查不到投稿时才判定为纯注销
+          if (it.nameDeleted && res.status !== 'ok') {
             res = { status: 'deletedByName', mid: mid };
-          } else {
-            try {
-              res = await fetchArchive(mid, 'pubdate', ps, cfg);
-            } catch (e) {
-              res = { status: 'error', mid: mid, err: String(e.message) };
-            }
           }
           if (scanState && scanState.cancelled) return;
 
@@ -1172,6 +1195,11 @@
               }
             } else {
               it.top = null;
+            }
+            if (it.nameDeleted) {
+              // 已注销但有历史投稿：保留视频信息（能看到最后一条视频），状态仍标记为已注销
+              it.status = 'deleted';
+              it.err = '该账号已注销，但仍可查到历史投稿（共 ' + (it.total || recent.length) + ' 条）';
             }
             it.cat = categorizeLocal(it);
             it.mediaGapDays = cadenceOf(recent);
@@ -1390,7 +1418,7 @@
   function stats() {
     const s = {
       total: STORE.order.length, ok: 0, recent: 0, medium: 0, long: 0, dead: 0,
-      novideo: 0, deleted: 0, none: 0, ai: 0, mutual: 0
+      novideo: 0, deleted: 0, deletedHistory: 0, none: 0, ai: 0, mutual: 0
     };
     STORE.order.forEach(function (mid) {
       const it = STORE.items[mid];
@@ -1398,6 +1426,7 @@
       const b = bucketOf(it);
       s[b] = (s[b] || 0) + 1;
       if (b !== 'none' && b !== 'deleted') s.ok++;
+      if (b === 'deleted' && it.last) s.deletedHistory++;
       if (it.attr === 6) s.mutual++;
       if (it.llm && it.llm.type) s.ai++;
     });
@@ -1822,7 +1851,8 @@
       '<span class="bfr-chip">半年内 <b>' + (s.recent + s.medium) + '</b></span>' +
       '<span class="bfr-chip">停更超1年 <b>' + s.dead + '</b></span>' +
       '<span class="bfr-chip">无投稿 <b>' + s.novideo + '</b></span>' +
-      '<span class="bfr-chip">已注销 <b>' + s.deleted + '</b></span>' +
+      '<span class="bfr-chip">已注销 <b>' + s.deleted + '</b>' +
+      (s.deletedHistory ? '（可查历史投稿 ' + s.deletedHistory + '）' : '') + '</span>' +
       '<span class="bfr-chip">互关 <b>' + s.mutual + '</b></span>' +
       (s.ai ? '<span class="bfr-chip">AI 已概括 <b>' + s.ai + '</b></span>' : '');
     if (view.catFilter) {
@@ -1959,7 +1989,8 @@
       deleted: ['b-deleted', '账号已注销'],
       none: ['b-none', (it.status === 'error' ? '采集失败' : '待采集')]
     };
-    const badge = badgeMap[b] || badgeMap.none;
+    let badge = badgeMap[b] || badgeMap.none;
+    if (b === 'deleted' && it.last) badge = ['b-deleted', '已注销·有历史投稿'];
     const typeLabel = (it.llm && it.llm.type) ? it.llm.type : (it.cat ? it.cat.label : '—');
     const typeDetail = (it.llm && it.llm.why) ? it.llm.why : (it.cat ? it.cat.detail : '');
     const faceImg = it.face
