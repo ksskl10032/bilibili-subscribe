@@ -2,7 +2,7 @@
 // @name         哔哩哔哩 · 关注回顾 (Followings Review)
 // @name:zh-CN   哔哩哔哩 · 关注回顾
 // @namespace    bilibili-followings-review
-// @version      1.2.4
+// @version      1.2.5
 // @description  一键回顾你关注的全部 UP 主：概括内容类型、最后一条视频与最火视频、关注时间与年度关注史，支持图表统计与批量取关，帮你想起当初为什么关注。
 // @description:zh-CN  回顾关注的全部 UP 主：类型概括、最后更新/最火视频、饼图统计、年度关注史、批量取关。
 // @author       you
@@ -33,7 +33,7 @@
 
 /**
  * ============================================================================
- * 哔哩哔哩 · 关注回顾  v1.2.4
+ * 哔哩哔哩 · 关注回顾  v1.2.5
  * ----------------------------------------------------------------------------
  * 功能：
  *   1. 拉取【当前登录账号】关注的全部用户（关注时间 mtime / 是否互关 attribute）。
@@ -70,7 +70,7 @@
     document.documentElement.setAttribute('data-bfr-loaded', '1');
   } catch (e) { /* ignore */ }
 
-  const VERSION = '1.2.4';
+  const VERSION = '1.2.5';
   const STORE_KEY = 'bfr_store_v1';      // 关注数据缓存
   const SETTINGS_KEY = 'bfr_settings_v1';
   const WBICACHE_KEY = 'bfr_wbi_v1';
@@ -1567,6 +1567,15 @@
 .bfr-modal .ft{padding:12px 18px;border-top:1px solid #eee;display:flex;gap:10px;justify-content:flex-end;flex:none}
 .bfr-hint{font-size:11.5px;color:#9499a0;margin:2px 0 0;line-height:1.55}
 .bfr-hint b{color:#d0507a}
+.bfr-sec{display:flex;align-items:center;gap:8px;margin:16px -18px 10px;padding:8px 18px;font-size:12.5px;font-weight:600;color:#333;
+ background:#f7f8fa;border-top:1px solid #e9ebee;border-bottom:1px solid #e9ebee}
+.bfr-sec:before{content:'';width:3px;height:13px;border-radius:2px;background:#fb7299;flex:none}
+.bfr-sec .tip{font-weight:400;font-size:11px;color:#9499a0}
+.bfr-sec.ai{background:#f4faff;border-color:#e3f0f8;color:#0b7fa8}
+.bfr-sec.ai:before{background:#00a1d6}
+.bfr-sec.danger{background:#fff7f7;border-color:#ffe3e3;color:#c93030}
+.bfr-sec.danger:before{background:#e23d3d}
+.bfr-modal .bd>.bfr-sec:first-child{border-top:none}
 .bfr-x{border:none;background:rgba(255,255,255,.2);color:#fff;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:13px;line-height:1;flex:none}
 .bfr-x:hover{background:rgba(255,255,255,.4)}
 .bfr-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 14px;border-top:1px solid #eee;background:#fafbfc;font-size:11.5px;color:#9499a0}
@@ -2240,6 +2249,7 @@
     UI.modal.className = 'bfr-modal open';
     UI.modal.innerHTML =
       '<h2>⚙ 设置</h2><div class="bd">' +
+      '<div class="bfr-sec ai">✨ AI 概括<span class="tip">可选，需自备 API Key；不开则完全本地分析</span></div>' +
       '<label class="small"><input type="checkbox" id="bfr-llm" ' + (s.llmEnabled ? 'checked' : '') + '> 启用「大模型概括」(AI)</label>' +
       '<p class="bfr-hint">启用后，会把每个 UP 主的 <b>昵称 / 认证 / 签名 / 最火视频 / 最近视频标题</b> 发送到所填模型服务商。' +
       '不启用时使用本地规则分析，完全不上传任何内容。若使用其它厂商，请把其域名加入脚本头部的 @connect 列表。</p>' +
@@ -2247,14 +2257,16 @@
       '<label>API Key（仅保存在本机油猴存储中）</label><input type="password" id="bfr-key" value="' + esc(s.llmKey) + '" placeholder="sk-…">' +
       '<label>模型</label><input type="text" id="bfr-model" value="' + esc(s.llmModel) + '" placeholder="deepseek-chat">' +
       '<label>每批 AI 概括人数</label><input type="number" id="bfr-batch" min="1" max="50" value="' + s.llmBatch + '">' +
+      '<div class="bfr-sec">🔄 数据采集<span class="tip">并发 / 缓存 / 最火视频 / 通知</span></div>' +
       '<label>采集并发数（1-6，越小越不容易被风控）</label><input type="number" id="bfr-conc" min="1" max="6" value="' + s.concurrency + '">' +
       '<label>缓存有效期（小时）</label><input type="number" id="bfr-ttl" min="1" max="168" value="' + s.ttlHours + '">' +
-      '<label class="small"><input type="checkbox" id="bfr-ufenable" ' + (s.unfollowEnabled ? 'checked' : '') + '> 启用「批量取关」功能（危险，默认关闭）</label>' +
-      '<p class="bfr-hint">关闭时面板不会出现「☑ 管理」与取关按钮，脚本也不会调用任何取关接口。<b>AI 概括只生成文字，与关注关系完全无关。</b></p>' +
-      '<label>批量取关间隔（毫秒，建议 ≥600）</label><input type="number" id="bfr-ufgap" min="300" max="5000" step="100" value="' + s.unfollowGap + '">' +
       '<label class="small"><input type="checkbox" id="bfr-fetchtop" ' + (s.fetchTop ? 'checked' : '') + '> 采集「最火视频」（每个 UP 多一次请求）</label>' +
       '<label class="small"><input type="checkbox" id="bfr-notify" ' + (s.notifyOnDone ? 'checked' : '') + '> 完成后系统通知</label>' +
-      '<p class="bfr-hint">数据版本 ' + VERSION + '｜当前缓存 ' + STORE.order.length + ' 位 UP 主。<span class="bfr-link" id="bfr-clear">清空缓存</span></p>' +
+      '<div class="bfr-sec danger">🗑 批量取关<span class="tip">危险操作，默认关闭</span></div>' +
+      '<label class="small"><input type="checkbox" id="bfr-ufenable" ' + (s.unfollowEnabled ? 'checked' : '') + '> 启用「批量取关」功能（默认关闭）</label>' +
+      '<p class="bfr-hint">关闭时面板不会出现「☑ 管理」与取关按钮，脚本也不会调用任何取关接口。<b>AI 概括只生成文字，与关注关系完全无关。</b></p>' +
+      '<label>批量取关间隔（毫秒，建议 ≥600）</label><input type="number" id="bfr-ufgap" min="300" max="5000" step="100" value="' + s.unfollowGap + '">' +
+      '<p class="bfr-hint" style="margin-top:14px">数据版本 ' + VERSION + '｜当前缓存 ' + STORE.order.length + ' 位 UP 主。<span class="bfr-link" id="bfr-clear">清空缓存</span></p>' +
       '</div><div class="ft">' +
       '<button class="bfr-btn dark" id="bfr-cancel">关闭</button>' +
       '<button class="bfr-btn primary" id="bfr-save">保存</button>' +
