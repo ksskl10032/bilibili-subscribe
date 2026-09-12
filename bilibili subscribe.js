@@ -2,7 +2,7 @@
 // @name         哔哩哔哩 · 关注回顾 (Followings Review)
 // @name:zh-CN   哔哩哔哩 · 关注回顾
 // @namespace    bilibili-followings-review
-// @version      1.2.6
+// @version      1.2.7
 // @description  一键回顾你关注的全部 UP 主：概括内容类型、最后一条视频与最火视频、关注时间与年度关注史，支持图表统计与批量取关，帮你想起当初为什么关注。
 // @description:zh-CN  回顾关注的全部 UP 主：类型概括、最后更新/最火视频、饼图统计、年度关注史、批量取关。
 // @author       you
@@ -33,7 +33,7 @@
 
 /**
  * ============================================================================
- * 哔哩哔哩 · 关注回顾  v1.2.6
+ * 哔哩哔哩 · 关注回顾  v1.2.7
  * ----------------------------------------------------------------------------
  * 功能：
  *   1. 拉取【当前登录账号】关注的全部用户（关注时间 mtime / 是否互关 attribute）。
@@ -70,7 +70,7 @@
     document.documentElement.setAttribute('data-bfr-loaded', '1');
   } catch (e) { /* ignore */ }
 
-  const VERSION = '1.2.6';
+  const VERSION = '1.2.7';
   const STORE_KEY = 'bfr_store_v1';      // 关注数据缓存
   const SETTINGS_KEY = 'bfr_settings_v1';
   const WBICACHE_KEY = 'bfr_wbi_v1';
@@ -457,11 +457,10 @@
     });
     // v1.2.6：已注销账号也要尝试读取历史投稿（能借此看到 TA 最后一条视频），
     // 所以把旧版本里“已注销已采集”的条目一次性标记为待更新
-    if (st.deletedScanV !== 2) {
-      Object.keys(st.items).forEach(function (mid) {
-        if (st.items[mid].status === 'deleted') st.items[mid].fetchedAt = 0;
-      });
-      st.deletedScanV = 2;
+    if (st.deletedScanV !== 3) {
+      // v1.2.7：新增“曾用名 / 原名”采集（来自稿件署名），一次性让下次更新重新拉一遍
+      Object.keys(st.items).forEach(function (mid) { st.items[mid].fetchedAt = 0; });
+      st.deletedScanV = 3;
     }
     return st;
   }
@@ -595,6 +594,7 @@
         parts.push('仍可查到历史投稿，最后一条更新于 ' + fmtDate(up.last.created) +
           '（' + fmtSpan(daysAgo(up.last.created)) + '）');
       }
+      if (up.formerNames && up.formerNames.length) parts.push('原名（稿件署名）：' + up.formerNames.join(' / '));
       if (zMajor) parts.push('历史投稿主要在「' + zTop + '」（' + zMajor + '类）');
       const delTags = [];
       (up.zones || []).slice(0, 2).forEach(function (z) {
@@ -698,6 +698,7 @@
     if (recentCounted > 0 && recentCounted < 3 && historyTop) {
       detail.push('近期投稿较少，主要参考历史投稿');
     }
+    if (up.formerNames && up.formerNames.length) detail.push('曾用名：' + up.formerNames.join(' / '));
     if (!officialDesc && sign) { detail.push('签名：' + trunc(sign, 60)); if (signMajor) srcs.push('签名'); }
     if (!detail.length) {
       detail.push(up.status === 'novideo'
@@ -786,6 +787,8 @@
         bvid: v.bvid || '', title: v.title || '',
         created: v.created || 0, tid: v.typeid || 0,
         play: v.play || 0, zoneName: zName,
+        author: v.author || '',          // 稿件署名：注销前 / 改名前的昵称往往保留在这里
+        isUnion: !!v.is_union_video,     // 合作视频的署名可能不是本 UP，需排除
         isLive: !!v.is_live_playback
       };
     });
@@ -841,7 +844,7 @@
           return {
             bvid: it.bvid || '', title: it.title || '',
             created: it.ctime || 0, tid: 0, play: it.play || 0,
-            zoneName: it.tname || ''
+            zoneName: it.tname || '', author: it.author || '', isUnion: false
           };
         });
         const zones = {};
@@ -900,7 +903,7 @@
     const r = await fetchArchive(mid, 'click', 1, SETTINGS);
     if (r.status !== 'ok' || !r.list || !r.list.length) return null;
     const v = r.list[0];
-    return { bvid: v.bvid, title: trunc(v.title, 120), created: v.created, play: v.play, zone: v.zoneName || '' };
+    return { bvid: v.bvid, title: trunc(v.title, 120), created: v.created, play: v.play, zone: v.zoneName || '', author: v.author || '', isUnion: v.isUnion };
   }
 
   /* ============================== 批量取关 ============================== */
@@ -1182,6 +1185,16 @@
             it.status = 'ok';
             it.err = '';
 
+            // 曾用名：取自稿件里的 UP 主署名（B 站会保留注销前 / 改名前的署名）。
+            // 排除合作视频（署名可能是别人）与当前昵称。
+            const formerNames = [];
+            const addFormer = function (a, isUnion) {
+              a = String(a || '').trim();
+              if (!a || isUnion || a === it.uname) return;
+              if (formerNames.indexOf(a) < 0) formerNames.push(a);
+            };
+            recent.forEach(function (v) { addFormer(v.author, v.isUnion); });
+
             if (cfg.fetchTop) {
               if (it.total > 0 && recent.length >= it.total) {
                 let best = recent[0];
@@ -1190,12 +1203,16 @@
                   bvid: best.bvid, title: trunc(best.title, 120),
                   created: best.created, play: best.play, zone: best.zoneName || ''
                 };
+                addFormer(best.author, best.isUnion);
               } else {
-                it.top = await fetchTopVideo(mid);
+                const t = await fetchTopVideo(mid);
+                it.top = t ? { bvid: t.bvid, title: t.title, created: t.created, play: t.play, zone: t.zone || '' } : null;
+                if (t) addFormer(t.author, t.isUnion);
               }
             } else {
               it.top = null;
             }
+            it.formerNames = formerNames.slice(0, 3);
             if (it.nameDeleted) {
               // 已注销但有历史投稿：保留视频信息（能看到最后一条视频），状态仍标记为已注销
               it.status = 'deleted';
@@ -1301,6 +1318,7 @@
         uname: b.uname,
         official: (b.official && b.official.desc) || '',
         sign: b.sign || '',
+        formerName: (b.formerNames && b.formerNames[0]) || '',
         total: b.total || 0,
         lastDays: b.last ? daysAgo(b.last.created) : null,
         zones: zoneStr,
@@ -1532,6 +1550,7 @@
 .bfr-user .nm:hover{color:#fb7299}
 .bfr-user .off{font-size:11px;color:#fb7299;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bfr-user .off.none{color:#b9bdc2}
+.bfr-former{font-size:10.5px;color:#a06bff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bfr-mutual{display:inline-block;font-size:10px;padding:0 5px;border-radius:7px;background:#e8f1ff;color:#3370ff;margin-left:4px;line-height:15px}
 .bfr-type .tl{font-weight:600;font-size:13px;color:#333;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .bfr-type .dt{font-size:11.5px;color:#8a9099;margin-top:2px;line-height:1.45;max-height:4.3em;overflow:hidden}
@@ -1921,7 +1940,8 @@
         const hay = ((it.uname || '') + ' ' + (it.sign || '') + ' ' +
           ((it.cat && it.cat.label) || '') + ' ' + ((it.cat && it.cat.detail) || '') + ' ' +
           ((it.llm && it.llm.type) || '') + ' ' + ((it.llm && it.llm.why) || '') + ' ' +
-          (it.last ? it.last.title : '') + ' ' + (it.top ? it.top.title : '')).toLowerCase();
+          (it.last ? it.last.title : '') + ' ' + (it.top ? it.top.title : '') + ' ' +
+          ((it.formerNames || []).join(' '))).toLowerCase();
         if (hay.indexOf(q) < 0) return;
       }
       items.push(it);
@@ -2040,6 +2060,10 @@
       (officialLine
         ? '<div class="off" title="' + esc(officialLine) + '">' + esc(trunc(officialLine, 26)) + '</div>'
         : '<div class="off none">' + (it.attr === 6 ? '互相关注' : 'UP主') + '</div>') +
+      ((it.formerNames && it.formerNames.length)
+        ? '<div class="bfr-former" title="取自 TA 稿件里的 UP 主署名（注销前 / 改名前的昵称）">曾用名：' +
+          esc(trunc(it.formerNames.join(' / '), 22)) + '</div>'
+        : '') +
       '</div></div>' +
       '<div class="bfr-type"><div class="tl">' + aiBadge + '<span>' + esc(typeLabel || '—') + '</span></div>' +
       (typeDetail ? '<div class="dt">' + esc(trunc(typeDetail, 180)) + '</div>' : '') +
@@ -2359,6 +2383,8 @@
         face: it.face,
         official: (it.official && it.official.desc) || '',
         sign: it.sign || '',
+        formerNames: it.formerNames || [],
+        formerName: (it.formerNames && it.formerNames[0]) || '',
         mutual: it.attr === 6,
         followTime: it.followTs ? new Date(it.followTs * 1000).toISOString() : null,
         followYear: it.followTs ? new Date(it.followTs * 1000).getFullYear() : null,
