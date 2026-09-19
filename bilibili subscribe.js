@@ -2,7 +2,7 @@
 // @name         哔哩哔哩 · 关注回顾 (Followings Review)
 // @name:zh-CN   哔哩哔哩 · 关注回顾
 // @namespace    bilibili-followings-review
-// @version      1.2.7
+// @version      1.2.8
 // @description  一键回顾你关注的全部 UP 主：概括内容类型、最后一条视频与最火视频、关注时间与年度关注史，支持图表统计与批量取关，帮你想起当初为什么关注。
 // @description:zh-CN  回顾关注的全部 UP 主：类型概括、最后更新/最火视频、饼图统计、年度关注史、批量取关。
 // @author       you
@@ -33,7 +33,7 @@
 
 /**
  * ============================================================================
- * 哔哩哔哩 · 关注回顾  v1.2.7
+ * 哔哩哔哩 · 关注回顾  v1.2.8
  * ----------------------------------------------------------------------------
  * 功能：
  *   1. 拉取【当前登录账号】关注的全部用户（关注时间 mtime / 是否互关 attribute）。
@@ -70,7 +70,7 @@
     document.documentElement.setAttribute('data-bfr-loaded', '1');
   } catch (e) { /* ignore */ }
 
-  const VERSION = '1.2.7';
+  const VERSION = '1.2.8';
   const STORE_KEY = 'bfr_store_v1';      // 关注数据缓存
   const SETTINGS_KEY = 'bfr_settings_v1';
   const WBICACHE_KEY = 'bfr_wbi_v1';
@@ -457,10 +457,13 @@
     });
     // v1.2.6：已注销账号也要尝试读取历史投稿（能借此看到 TA 最后一条视频），
     // 所以把旧版本里“已注销已采集”的条目一次性标记为待更新
-    if (st.deletedScanV !== 3) {
-      // v1.2.7：新增“曾用名 / 原名”采集（来自稿件署名），一次性让下次更新重新拉一遍
-      Object.keys(st.items).forEach(function (mid) { st.items[mid].fetchedAt = 0; });
-      st.deletedScanV = 3;
+    if (st.deletedScanV !== 4) {
+      // v1.2.8：旧版本会把“采集失败”误判成“无投稿”，这里把这些条目重新核实一次
+      Object.keys(st.items).forEach(function (mid) {
+        const it = st.items[mid];
+        if (it.status === 'novideo' || it.status === 'error' || it.status === 'noarchive') it.fetchedAt = 0;
+      });
+      st.deletedScanV = 4;
     }
     return st;
   }
@@ -859,14 +862,40 @@
           mid: mid, total: d.count || 0, list: items, zones: zoneArr, fromApp: true
         };
       }
-      return { status: 'error', mid: mid, err: '兜底接口失败 code=' + (j ? j.code : res.status) };
+      return {
+        status: 'error', mid: mid,
+        err: '投稿查询失败（可能被风控限流）：兜底接口 code=' + (j ? j.code : res.status) + '，可稍后重新「更新数据」'
+      };
     } catch (e2) {
-      return { status: 'error', mid: mid, err: 'both:' + String(e2.message) };
+      return {
+        status: 'error', mid: mid,
+        err: '投稿查询失败（可能被风控限流）：' + String(e2.message) + '，可稍后重新「更新数据」'
+      };
     }
   }
 
-  /** 探测账号是否仍然存在（区分「无投稿」与「已注销」） */
+  /**
+   * 探测账号状态：是否仍然存在 + 稿件数（archive_count）。
+   * 稿件数很关键：它是判断「真的没有投稿」还是「本次查询被风控拦了」的依据，
+   * 避免把一次失败的查询误报成「无投稿」。
+   */
   async function probeAccount(mid) {
+    // 1) 先查名片：除昵称/签名外还带 archive_count
+    try {
+      const r2 = await biliGet('https://api.bilibili.com/x/web-interface/card',
+        { mid: mid, photo: false }, { cookie: true });
+      if (r2.ok && r2.data && r2.data.card) {
+        const c = r2.data.card;
+        return {
+          alive: true, name: c.name || '', sign: c.sign || '',
+          official: c.official_verify ? { type: c.official_verify.type, desc: c.official_verify.desc || '' } : null,
+          archiveCount: (r2.data.archive_count != null) ? Number(r2.data.archive_count) : null
+        };
+      }
+      if (r2.code === -404 || r2.code === -400 || r2.code === 40061) return { alive: false, archiveCount: null };
+    } catch (e) { /* 继续尝试兜底 */ }
+
+    // 2) 兜底：wbi acc/info（不含稿件数）
     try {
       const url = await buildSignedUrl('https://api.bilibili.com/x/space/wbi/acc/info',
         { mid: mid, platform: 'web' }, false);
@@ -877,26 +906,14 @@
           sign: r.data.sign || '',
           official: r.data.official
             ? { type: r.data.official.type, desc: r.data.official.title || r.data.official.desc || '' }
-            : null
+            : null,
+          archiveCount: null
         };
       }
-      if (r.code === -404 || r.code === -400 || r.code === 40061 || r.code === 22013) return { alive: false };
-    } catch (e) { /* 尝试兜底 */ }
-
-    try {
-      const r2 = await biliGet('https://api.bilibili.com/x/web-interface/card',
-        { mid: mid, photo: false }, { cookie: true });
-      if (r2.ok && r2.data && r2.data.card) {
-        const c = r2.data.card;
-        return {
-          alive: true, name: c.name || '', sign: c.sign || '',
-          official: c.official_verify ? { type: c.official_verify.type, desc: c.official_verify.desc || '' } : null
-        };
-      }
-      if (r2.code === -404 || r2.code === -400 || r2.code === 40061) return { alive: false };
+      if (r.code === -404 || r.code === -400 || r.code === 40061 || r.code === 22013) return { alive: false, archiveCount: null };
     } catch (e2) { /* ignore */ }
 
-    return { alive: null };
+    return { alive: null, archiveCount: null };
   }
 
   async function fetchTopVideo(mid) {
@@ -1221,24 +1238,37 @@
             it.cat = categorizeLocal(it);
             it.mediaGapDays = cadenceOf(recent);
           } else {
-            // 无投稿 / 采集失败：探测账号是否还存在 → 区分「无投稿」「已注销」
+            // 投稿查询没有成功。这里必须严格区分两种情况，绝不能把「查询失败」当成「无投稿」：
+            //   ① 查到列表为空 且 名片显示稿件数为 0 → 真·无投稿
+            //   ② 查询失败（风控 -352/-412、网络超时、兜底失败）或稿件数 > 0 → 采集失败，保留旧数据
+            const hadData = !!(it.last || it.total > 0);
             const probe = await probeAccount(mid);
+            const count = (probe && probe.archiveCount != null) ? probe.archiveCount : null;
+
             if (probe.alive === false) {
               it.status = 'deleted';
               it.err = '账号已注销/不存在';
               it.total = 0; it.last = null; it.recent = []; it.top = null; it.zones = [];
-            } else if (probe.alive === true) {
+            } else if (count != null && count > 0) {
+              // 该账号明明有稿件，说明本次是查询失败（多为风控限流）→ 保留已有数据，不写「无投稿」
+              it.err = '该账号实际有 ' + count + ' 个稿件，但本次未取到投稿列表' +
+                '（可能被风控限流，或稿件为课堂/充电专属/不可见），请稍后重新「更新数据」；已保留上次结果';
+              if (!hadData) it.status = 'error';
+            } else if (res.status === 'noarchive' && probe.alive === true && count === 0) {
+              // 名片稿件数为 0，且投稿列表也为空 → 确认无投稿
               it.status = 'novideo';
               it.err = '';
               it.total = 0; it.last = null; it.recent = []; it.top = null; it.zones = [];
               if (!it.sign && probe.sign) it.sign = probe.sign;
               if ((!it.official || !it.official.desc) && probe.official) it.official = probe.official;
             } else {
-              it.err = res.err || '采集失败（账号状态未知）';
-              if (!it.last && !it.total && it.status !== 'deleted') it.status = 'error';
+              it.err = (res.status === 'noarchive')
+                ? '本次未返回投稿列表（稿件数无法确认），已保留上次结果'
+                : (res.err || '采集失败（账号状态未知）');
+              if (!hadData && it.status !== 'deleted') it.status = 'error';
             }
             it.cat = categorizeLocal(it);
-            it.mediaGapDays = null;
+            if (!hadData) it.mediaGapDays = null;
           }
           it.fetchedAt = nowTs();
           doneCount++;
@@ -1744,7 +1774,7 @@
     const toolbar = UI.root.querySelector('.bfr-toolbar');
     const tabs = [
       ['all', '全部'], ['recent', '近30天'], ['medium', '1~6月'], ['long', '6~12月'],
-      ['dead', '停更超1年'], ['novideo', '无投稿'], ['deleted', '已注销']
+      ['dead', '停更超1年'], ['novideo', '无投稿'], ['deleted', '已注销'], ['none', '采集未成功']
     ];
     let t = '';
     tabs.forEach(function (x) {
@@ -1872,6 +1902,7 @@
       '<span class="bfr-chip">无投稿 <b>' + s.novideo + '</b></span>' +
       '<span class="bfr-chip">已注销 <b>' + s.deleted + '</b>' +
       (s.deletedHistory ? '（可查历史投稿 ' + s.deletedHistory + '）' : '') + '</span>' +
+      (s.none ? '<span class="bfr-chip">采集未成功 <b>' + s.none + '</b></span>' : '') +
       '<span class="bfr-chip">互关 <b>' + s.mutual + '</b></span>' +
       (s.ai ? '<span class="bfr-chip">AI 已概括 <b>' + s.ai + '</b></span>' : '');
     if (view.catFilter) {
